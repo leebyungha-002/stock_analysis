@@ -126,67 +126,96 @@ def get_stock_reports(code):
 
 def _scrape_investor_data_from_naver(code, start_date, end_date):
     """
-    네이버 금융에서 투자자별 수급 데이터를 시도합니다.
-    주: 현재 네이버 금융의 HTML 구조상 직접적인 거래량 데이터는 제한적입니다.
-    
-    반환: [{'날짜': '20260401', '외국인_순매수': 100, ...}, ...]
+    네이버 금융 frgn.naver에서 외국인/기관 순매수 데이터를 스크래핑합니다.
+    URL: https://finance.naver.com/item/frgn.naver?code={code}&page={page}
+    테이블(두 번째 type2): 날짜|종가|전일비|등락률|거래량|기관순매매|외국인순매매|외국인보유|보유율
+    컬럼 인덱스: tds[5]=기관합계, tds[6]=외국인합계
+
+    반환: DataFrame (인덱스: datetime, 컬럼: 외국인합계, 기관합계)
     """
     if not requests:
-        return []
-    
-    investor_data = []
-    
+        return pd.DataFrame()
+
+    code = str(code).strip().zfill(6)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://finance.naver.com/",
+    }
+
     try:
-        code = str(code).strip().zfill(6)
-        url = f"https://finance.naver.com/item/sise_day.naver?code={code}&page=1"
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        
-        res = requests.get(url, headers=headers, timeout=5)
-        res.encoding = 'euc-kr'
-        
-        if res.status_code == 200:
+        start_dt = datetime.strptime(start_date, '%Y%m%d')
+        end_dt   = datetime.strptime(end_date,   '%Y%m%d')
+    except ValueError:
+        return pd.DataFrame()
+
+    def _to_int(text):
+        """콤마·부호 제거 후 정수 변환"""
+        cleaned = text.strip().replace(',', '').replace('+', '').replace('▲', '').replace('▼', '')
+        try:
+            return int(cleaned)
+        except ValueError:
+            return 0
+
+    rows_data = {}  # {yyyymmdd: {'외국인합계': int, '기관합계': int}}
+
+    for page in range(1, 30):  # 최대 30페이지 (~360거래일)
+        url = f"https://finance.naver.com/item/frgn.naver?code={code}&page={page}"
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            res.encoding = 'euc-kr'
+            if res.status_code != 200:
+                break
+
             soup = BeautifulSoup(res.text, 'html.parser')
-            table = soup.find('table', {'class': 'type2'})
-            
-            if table:
-                rows = table.find_all('tr')
-                
-                for row in rows[2:]:  # 헤더 제외
-                    cols = row.find_all('td')
-                    
-                    if len(cols) < 7:
-                        continue
-                    
-                    try:
-                        date_str = cols[0].get_text(strip=True)
-                        
-                        # 날짜 형식 변환
-                        if '.' in date_str:
-                            date_obj = datetime.strptime(date_str, '%Y.%m.%d')
-                            date_str_yyyymmdd = date_obj.strftime('%Y%m%d')
-                        else:
-                            continue
-                        
-                        # 주: 현재 페이지의 type2 테이블에는 투자자별 거래량이 표시되지 않음
-                        # 대신 공시정보나 다른 API 활용이 필요함
-                        # 임시로 0 값 반환 (추후 데이터 소스 추가 시 수정)
-                        
-                        investor_data.append({
-                            '날짜': date_str_yyyymmdd,
-                            '외국인_순매수': 0,
-                            '기관_순매수': 0,
-                            '개인_순매수': 0
-                        })
-                    except:
-                        continue
-    
-    except Exception as e:
-        pass
-    
-    return investor_data
+            # frgn.naver에는 type2 테이블이 2개 - 두 번째가 일별 수급 데이터
+            type2_tables = soup.find_all('table', {'class': 'type2'})
+            if len(type2_tables) < 2:
+                break
+            table = type2_tables[1]
+
+            stop_paging = False
+            for tr in table.find_all('tr'):
+                tds = tr.find_all('td')
+                if len(tds) < 9:  # 날짜|종가|전일비|등락률|거래량|기관|외국인|보유주수|보유율
+                    continue
+
+                date_text = tds[0].get_text(strip=True)
+                if '.' not in date_text:
+                    continue
+
+                try:
+                    date_obj = datetime.strptime(date_text, '%Y.%m.%d')
+                except ValueError:
+                    continue
+
+                if date_obj < start_dt:
+                    stop_paging = True
+                    break
+                if date_obj > end_dt:
+                    continue
+
+                inst_net   = _to_int(tds[5].get_text(strip=True))  # 기관 순매매량
+                foreign_net = _to_int(tds[6].get_text(strip=True))  # 외국인 순매매량
+
+                rows_data[date_obj.strftime('%Y%m%d')] = {
+                    '외국인합계': foreign_net,
+                    '기관합계':   inst_net,
+                }
+
+        except Exception as e:
+            print(f"⚠️ 외국인/기관 수급 스크래핑 오류 (page {page}): {e}")
+            break
+
+        if stop_paging:
+            break
+
+    if not rows_data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame.from_dict(rows_data, orient='index')
+    df.index = pd.to_datetime(df.index, format='%Y%m%d')
+    df.index.name = '날짜'
+    return df.sort_index()
 
 def calculate_rsi(series, period=14):
     """RSI(상대강도지수) 계산 함수"""
@@ -244,20 +273,22 @@ def get_stock_data_for_gemini(code, stock_name, days=10):
         time.sleep(0.5) # 서버 부하 방지
         df_price = stock.get_market_ohlcv(start_date, end_date, code)
         
-        # 2. 투자자별 수급 데이터 가져오기 (pykrx의 get_market_trading_volume_by_date 사용)
+        # 2. 투자자별 수급 데이터: pykrx 시도 → 실패 시 네이버 금융 스크래핑
+        df_investor = pd.DataFrame()
         try:
             df_investor = stock.get_market_trading_volume_by_date(start_date, end_date, code, on='순매수')
-
-            if df_investor.empty:
-                print(f"\n⚠️ 주의: {stock_name}({code})의 투자자별 수급 데이터가 비어 있습니다.")
-                print("   (pykrx API 또는 KRX 데이터 서버 점검 중일 수 있습니다.)")
-                df_investor = pd.DataFrame()
-            else:
-                # 인덱스를 날짜형으로 통일
+            if not df_investor.empty:
                 df_investor.index = pd.to_datetime(df_investor.index)
-        except Exception as e:
-            print(f"\n⚠️ {stock_name}({code}) 투자자 수급 조회 실패: {e}")
-            df_investor = pd.DataFrame()
+        except Exception:
+            pass  # 아래에서 네이버 금융으로 재시도
+
+        if df_investor.empty:
+            print(f"   → pykrx 수급 없음, 네이버 금융 스크래핑 시도...")
+            df_investor = _scrape_investor_data_from_naver(code, start_date, end_date)
+            if not df_investor.empty:
+                print(f"   → 외국인 수급 {len(df_investor)}일치 수집 완료")
+            else:
+                print(f"   → 네이버 금융 스크래핑도 실패 (수급 데이터 없음)")
         
         # 데이터 병합 (날짜 기준 인덱스 매칭)
         # dropna(subset=['종가']): 가격 데이터가 있는 행은 보존 (수급 데이터 없어도 유지)
