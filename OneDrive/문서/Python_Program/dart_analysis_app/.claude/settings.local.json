@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:\\\\Users\\\\USer\\\\Documents\\\\Python_Program\\\\dart_analysis_app\\\\.venv\\\\Scripts\\\\python.exe:*)"
+    ]
+  }
+}
