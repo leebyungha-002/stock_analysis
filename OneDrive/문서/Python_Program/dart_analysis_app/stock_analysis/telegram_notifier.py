@@ -5,6 +5,7 @@
 """
 import os
 import requests
+import tempfile
 
 def _load_env():
     """dart_analysis_app/.env 파일에서 환경변수 로드 (python-dotenv 불필요)"""
@@ -55,3 +56,55 @@ def send_message(text: str, token: str = '', chat_id: str = '') -> bool:
             print(f"⚠️  텔레그램 전송 오류: {e}")
             return False
     return True
+
+
+def send_document(text: str, filename: str = '', caption: str = '',
+                  token: str = '', chat_id: str = '') -> bool:
+    """
+    분석 결과를 텍스트 파일(.txt)로 저장한 뒤 텔레그램 파일로 전송.
+    caption이 지정되면 파일에 첨부 메모로 표시된다.
+    """
+    token   = token   or BOT_TOKEN
+    chat_id = chat_id or CHAT_ID
+
+    if not token or not chat_id:
+        print("⚠️  .env 파일에 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID를 설정하세요.")
+        return False
+
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+
+    # HTML 태그 제거 (텍스트 파일에는 태그 불필요)
+    import re
+    plain_text = re.sub(r'<[^>]+>', '', text)
+
+    tmp_path = None
+    try:
+        suffix = '.txt'
+        with tempfile.NamedTemporaryFile(
+            mode='w', encoding='utf-8',
+            suffix=suffix, delete=False
+        ) as tmp:
+            tmp.write(plain_text)
+            tmp_path = tmp.name
+
+        fname = filename or os.path.basename(tmp_path)
+
+        with open(tmp_path, 'rb') as f:
+            resp = requests.post(
+                url,
+                data={'chat_id': chat_id, 'caption': caption},
+                files={'document': (fname, f, 'text/plain')},
+                timeout=30
+            )
+
+        if not resp.ok:
+            print(f"⚠️  파일 전송 실패 ({resp.status_code}): {resp.text[:300]}")
+            return False
+        return True
+
+    except Exception as e:
+        print(f"⚠️  파일 전송 오류: {e}")
+        return False
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)

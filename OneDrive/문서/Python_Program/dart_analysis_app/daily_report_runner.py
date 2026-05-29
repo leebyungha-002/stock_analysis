@@ -29,7 +29,7 @@ from kr_market_indicators import get_market_indicators
 from us_market_indicators  import get_us_market_indicators
 from kr_stock_api          import MY_FAVORITES, find_stock_code, get_stock_data_for_gemini
 from us_stock_api          import MY_US_FAVORITES, _fetch_ohlcv, _add_technical_indicators
-from telegram_notifier     import send_message
+from telegram_notifier     import send_message, send_document
 
 try:
     from pykrx import stock as pykrx_stock
@@ -255,26 +255,21 @@ def main():
     print("[4/4] 미국 관심종목 분석 중...")
     us_stocks = build_us_stocks_section()
 
-    # ── 텔레그램 전송 ──────────────────────────
-    print("\n📨 텔레그램 전송 중...")
-    results = []
+    # ── 리포트 전체 취합 ───────────────────────
+    header   = f"📊 주식 분석 리포트\n{now_str}"
+    full_report = "\n".join([header, kr_market, us_market, kr_stocks, us_stocks])
 
-    # 메시지 1: 거시경제 요약
-    msg1 = f"<b>📊 주식 분석 리포트</b>\n{now_str}\n{kr_market}\n{us_market}"
-    results.append(send_message(msg1))
-    time.sleep(1)
+    filename = f"stock_report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+    caption  = f"📊 주식 분석 리포트 ({now_str})"
 
-    # 메시지 2: 한국 관심종목 (일별 데이터 포함, 길어서 자동 분할됨)
-    results.append(send_message(kr_stocks))
-    time.sleep(1)
+    # ── 텔레그램 파일 전송 ─────────────────────
+    print("\n📨 텔레그램 파일 전송 중...")
+    ok = send_document(full_report, filename=filename, caption=caption)
 
-    # 메시지 3: 미국 관심종목
-    results.append(send_message(us_stocks))
-
-    if all(results):
-        print("✅ 텔레그램 전송 완료!")
+    if ok:
+        print("✅ 텔레그램 파일 전송 완료!")
     else:
-        print("⚠️  일부 메시지 전송 실패. .env 파일을 확인하세요.")
+        print("⚠️  파일 전송 실패. .env 파일을 확인하세요.")
 
     print(f"\n{'='*60}")
     print("✅ 분석 완료!")
