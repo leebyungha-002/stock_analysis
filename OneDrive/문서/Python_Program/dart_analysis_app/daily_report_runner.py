@@ -228,8 +228,49 @@ def build_us_stocks_section() -> str:
 # ─────────────────────────────────────────────
 # 메인
 # ─────────────────────────────────────────────
+def run_kr_report(now_str: str):
+    """국장 리포트: 한국 거시경제 + 한국 관심종목 → 오후 4시"""
+    print("\n[1/2] 한국 거시경제 수집 중...")
+    kr_market = build_kr_market_section()
+
+    print("[2/2] 한국 관심종목 분석 중... (약 2~3분 소요)")
+    kr_stocks = build_kr_stocks_section()
+
+    header = f"🇰🇷 한국 주식 분석 리포트\n{now_str}"
+    report = "\n".join([header, kr_market, kr_stocks])
+
+    filename = f"kr_report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+    caption  = f"🇰🇷 국장 분석 리포트 ({now_str})"
+
+    print("\n📨 텔레그램 파일 전송 중...")
+    ok = send_document(report, filename=filename, caption=caption)
+    print("✅ 전송 완료!" if ok else "⚠️  전송 실패.")
+
+
+def run_us_report(now_str: str):
+    """미장 리포트: 미국 거시경제 + 미국 관심종목 → 오전 8시"""
+    print("\n[1/2] 미국 거시경제 수집 중...")
+    us_market = build_us_market_section()
+
+    print("[2/2] 미국 관심종목 분석 중...")
+    us_stocks = build_us_stocks_section()
+
+    header = f"🇺🇸 미국 주식 분석 리포트\n{now_str}"
+    report = "\n".join([header, us_market, us_stocks])
+
+    filename = f"us_report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+    caption  = f"🇺🇸 미장 분석 리포트 ({now_str})"
+
+    print("\n📨 텔레그램 파일 전송 중...")
+    ok = send_document(report, filename=filename, caption=caption)
+    print("✅ 전송 완료!" if ok else "⚠️  전송 실패.")
+
+
 def main():
-    test_mode = '--test' in sys.argv
+    args      = sys.argv[1:]
+    test_mode = '--test' in args
+    kr_mode   = '--kr'   in args
+    us_mode   = '--us'   in args
     now_str   = datetime.now().strftime('%Y-%m-%d %H:%M')
 
     print(f"\n{'='*60}")
@@ -242,34 +283,32 @@ def main():
         print("✅ 연결 성공!" if ok else "❌ 연결 실패 - .env 파일을 확인하세요.")
         return
 
-    # ── 섹션 수집 ──────────────────────────────
-    print("\n[1/4] 한국 거시경제 수집 중...")
-    kr_market = build_kr_market_section()
-
-    print("[2/4] 미국 거시경제 수집 중...")
-    us_market = build_us_market_section()
-
-    print("[3/4] 한국 관심종목 분석 중... (약 2~3분 소요)")
-    kr_stocks = build_kr_stocks_section()
-
-    print("[4/4] 미국 관심종목 분석 중...")
-    us_stocks = build_us_stocks_section()
-
-    # ── 리포트 전체 취합 ───────────────────────
-    header   = f"📊 주식 분석 리포트\n{now_str}"
-    full_report = "\n".join([header, kr_market, us_market, kr_stocks, us_stocks])
-
-    filename = f"stock_report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
-    caption  = f"📊 주식 분석 리포트 ({now_str})"
-
-    # ── 텔레그램 파일 전송 ─────────────────────
-    print("\n📨 텔레그램 파일 전송 중...")
-    ok = send_document(full_report, filename=filename, caption=caption)
-
-    if ok:
-        print("✅ 텔레그램 파일 전송 완료!")
+    if kr_mode:
+        run_kr_report(now_str)
+    elif us_mode:
+        run_us_report(now_str)
     else:
-        print("⚠️  파일 전송 실패. .env 파일을 확인하세요.")
+        # 인수 없이 실행하면 전체 리포트 (기존 동작)
+        print("\n[1/4] 한국 거시경제 수집 중...")
+        kr_market = build_kr_market_section()
+
+        print("[2/4] 미국 거시경제 수집 중...")
+        us_market = build_us_market_section()
+
+        print("[3/4] 한국 관심종목 분석 중... (약 2~3분 소요)")
+        kr_stocks = build_kr_stocks_section()
+
+        print("[4/4] 미국 관심종목 분석 중...")
+        us_stocks = build_us_stocks_section()
+
+        header      = f"📊 주식 분석 리포트\n{now_str}"
+        full_report = "\n".join([header, kr_market, us_market, kr_stocks, us_stocks])
+        filename    = f"stock_report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+        caption     = f"📊 주식 분석 리포트 ({now_str})"
+
+        print("\n📨 텔레그램 파일 전송 중...")
+        ok = send_document(full_report, filename=filename, caption=caption)
+        print("✅ 텔레그램 파일 전송 완료!" if ok else "⚠️  파일 전송 실패.")
 
     print(f"\n{'='*60}")
     print("✅ 분석 완료!")
