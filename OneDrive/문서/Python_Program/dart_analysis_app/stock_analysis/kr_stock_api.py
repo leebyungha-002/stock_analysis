@@ -231,11 +231,12 @@ def check_5day_continuous_buying(series):
     최근 5일 연속 순매수 여부 확인 (외국인/기관용)
     Returns: (is_5day_continuous, recent_5day_list)
     """
-    if len(series) < 5:
+    valid_series = series.dropna()
+    if len(valid_series) < 5:
         return False, []
-    
+
     try:
-        recent_5 = series.tail(5)
+        recent_5 = valid_series.tail(5)
         # 5일치 값을 float로 변환
         recent_5_values = []
         for val in recent_5.values:
@@ -343,13 +344,13 @@ def get_stock_data_for_gemini(code, stock_name, days=10):
     # 📊 [신규] 연속 순매수 일수 계산 로직
     # ==========================================
     def calculate_consecutive_buy_days(series):
-        """연속 순매수 일수 계산 (최근부터 역순으로 카운트, 정확성 개선)"""
+        """연속 순매수 일수 계산 (최근부터 역순으로 카운트, NaN 제외)"""
+        valid_series = series.dropna()
         consecutive_days = 0
-        # 최근 데이터부터 역순으로 확인
-        if len(series) == 0:
+        if len(valid_series) == 0:
             return 0
-        
-        for val in reversed(series.values):
+
+        for val in reversed(valid_series.values):
             try:
                 val_num = float(val)
                 if val_num > 0:  # 순매수인 경우
@@ -488,11 +489,20 @@ def get_stock_data_for_gemini(code, stock_name, days=10):
         val_foreign_net = get_val(row, ['외국인합계', '외국인_순매수', '외국인'])
         val_inst_net = get_val(row, ['기관합계', '기관_순매수', '기관'])
 
-        # 순매수/순매도 마크 (양수=매집, 음수=매도)
-        for_mark = "🔴" if val_foreign_net > 0 else "🔵" if val_foreign_net < 0 else "➖"
-        inst_mark = "🔴" if val_inst_net > 0 else "🔵" if val_inst_net < 0 else "➖"
+        # 순매수/순매도 마크 (양수=매집, 음수=매도, NaN=미집계)
+        if pd.isna(val_foreign_net):
+            for_mark, for_str = "➖", "미집계"
+        else:
+            for_mark = "🔴" if val_foreign_net > 0 else "🔵" if val_foreign_net < 0 else "➖"
+            for_str = f"{val_foreign_net:+,.0f}"
 
-        prompt += f"   - {date_str}: {price_icon}{row['종가']:,.0f}원 ({chg:+.2f}%) 거래량:{vol:,.0f} | [외인 {for_mark}{val_foreign_net:+,.0f}] [기관 {inst_mark}{val_inst_net:+,.0f}]\n"
+        if pd.isna(val_inst_net):
+            inst_mark, inst_str = "➖", "미집계"
+        else:
+            inst_mark = "🔴" if val_inst_net > 0 else "🔵" if val_inst_net < 0 else "➖"
+            inst_str = f"{val_inst_net:+,.0f}"
+
+        prompt += f"   - {date_str}: {price_icon}{row['종가']:,.0f}원 ({chg:+.2f}%) 거래량:{vol:,.0f} | [외인 {for_mark}{for_str}] [기관 {inst_mark}{inst_str}]\n"
 
     prompt += """
 3. **분석 요청 사항**:
