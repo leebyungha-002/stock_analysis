@@ -189,7 +189,7 @@ def build_kr_stocks_section() -> str:
 
 
 def build_us_stocks_section() -> str:
-    """미국 관심종목 기술적 분석 요약 문자열 반환"""
+    """미국 관심종목 기술적 분석 요약 + 10일 일별 데이터 문자열 반환"""
     lines = [f"\n🇺🇸 <b>미국 관심종목</b> ({len(MY_US_FAVORITES)}개)\n"]
 
     for ticker in MY_US_FAVORITES:
@@ -217,7 +217,23 @@ def build_us_stocks_section() -> str:
                 rsi_str = f"RSI:중립({rsi:.0f})"
 
             trend = "상승" if last['MA5'] > last['MA20'] else "조정"
-            lines.append(f" · {ticker}: ${price:.2f} {_arrow(chg_pct)}{chg_pct:+.2f}% | {rsi_str} {trend}추세")
+            lines.append(f"\n<b>▪ {ticker}</b>: ${price:.2f} {_arrow(chg_pct)}{chg_pct:+.2f}% | {rsi_str} {trend}추세")
+
+            # 10일 일별 데이터 (종가, 등락폭, 거래량)
+            recent = df.tail(10).copy()
+            recent['prev_close'] = df['Close'].shift(1).tail(10).values
+            for date, row in recent.iterrows():
+                date_str  = date.strftime('%m/%d') if hasattr(date, 'strftime') else str(date)[:5]
+                p_close   = row['prev_close']
+                if pd.notna(p_close) and p_close != 0:
+                    chg     = row['Close'] - p_close
+                    chg_pct_day = chg / p_close * 100
+                else:
+                    chg, chg_pct_day = 0.0, 0.0
+                vol = row.get('Volume', 0)
+                vol_str = f"{vol/1e6:.1f}M" if pd.notna(vol) and vol >= 1e6 else (f"{vol/1e3:.0f}K" if pd.notna(vol) and vol > 0 else "-")
+                lines.append(f"   {date_str}: ${row['Close']:.2f} {_arrow(chg_pct_day)}{chg_pct_day:+.2f}% ({chg:+.2f}) | Vol:{vol_str}")
+
             time.sleep(0.5)
         except Exception as e:
             lines.append(f" · {ticker}: 분석 오류 ({str(e)[:40]})")
