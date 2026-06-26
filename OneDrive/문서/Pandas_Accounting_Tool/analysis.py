@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
@@ -32,6 +32,18 @@ RELATED_PARTIES = [
     '(주)세중샤론손해보험', '대표이사', '(주)세중엔지니어링',
     '(재)우리옛돌문화재단', '주)세중인터내셔널', '(주)세중인터내셔널', '(주)세성항운',
     '천신일', '천세전', '천호전', '천미전'
+]
+
+BANK_CONFIRMATION_ACCOUNTS = [
+    '이자비용',
+    '단기차입금',
+    '장기차입금',
+    '유동성장기부채',
+    '유동성장기차입금',
+    '전환사채',
+    '유동성전환사채',
+    '전환상환우선주',
+    '유동성전환상환우선주',
 ]
 
 SEARCH_KEYWORDS = [
@@ -2308,6 +2320,86 @@ def run_general_ledger(df, writer, account_name):
     print(f"     ✅ 총계정원장 완료: '{account_name}' → {mode_label}")
 
 
+def run_bank_confirmation(df, account_list, writer):
+    """은행조회서 완전성: 지정 계정의 상세내역을 하나의 시트에 통합 기록"""
+    print(f"   ▶ [은행조회서 완전성] {len(account_list)}개 계정 상세내역 수집 중...")
+    sheet_name = '은행조회서완전성'
+    all_rows = []
+
+    for acct in account_list:
+        mask = _account_match_flexible(df[COL_ACCOUNT], acct)
+        sub = df[mask].copy()
+        if sub.empty:
+            print(f"     ℹ️ '{acct}': 데이터 없음")
+            continue
+        sub.insert(0, '조회계정', acct)
+        all_rows.append(sub)
+        print(f"     ✅ '{acct}': {len(sub)}건")
+
+    if not all_rows:
+        pd.DataFrame({'안내': ['해당 계정의 전표 내역이 없습니다.']}).to_excel(
+            writer, sheet_name=sheet_name, index=False
+        )
+        return
+
+    combined = pd.concat(all_rows, ignore_index=True)
+
+    priority_cols = ['조회계정']
+    if '구분' in combined.columns:
+        priority_cols.append('구분')
+    for c in [COL_DATE, COL_JOURNAL_ID, COL_ACCOUNT, COL_DEBIT, COL_CREDIT, COL_CLIENT, COL_DESC]:
+        if c in combined.columns:
+            priority_cols.append(c)
+    other_cols = [c for c in combined.columns if c not in priority_cols]
+    combined = combined[priority_cols + other_cols]
+
+    acct_order = {acct: i for i, acct in enumerate(account_list)}
+    combined['_sort'] = combined['조회계정'].map(acct_order).fillna(999)
+    sort_cols = ['_sort', COL_DATE] if COL_DATE in combined.columns else ['_sort']
+    combined = combined.sort_values(by=sort_cols, ascending=True).drop(columns=['_sort'])
+
+    total_debit  = combined[COL_DEBIT].sum()  if COL_DEBIT  in combined.columns else 0
+    total_credit = combined[COL_CREDIT].sum() if COL_CREDIT in combined.columns else 0
+
+    info_rows = [
+        f"[은행조회서 완전성] 조회 계정: {', '.join(account_list)}",
+        f"총 {len(combined)}건  |  차변합계: {total_debit:,.0f}  |  대변합계: {total_credit:,.0f}",
+    ]
+    pd.DataFrame({'내용': info_rows}).to_excel(
+        writer, sheet_name=sheet_name, startrow=0, index=False, header=False
+    )
+    combined.to_excel(writer, sheet_name=sheet_name, startrow=len(info_rows) + 1, index=False)
+    print(f"     ✅ 은행조회서 완전성 시트 완료: {len(combined)}건")
+
+
+def run_menu_bank_confirmation(df, base_dir=None, output_filename=None, batch_mode=False):
+    """은행조회서 완전성: 차입금·이자비용 등 관련 계정 상세내역 통합 시트 생성"""
+    print("\n   [22. 은행조회서 완전성]")
+    print("   ─ 현재 조회 계정 목록 ─")
+    for i, acct in enumerate(BANK_CONFIRMATION_ACCOUNTS, 1):
+        print(f"      {i:2}. {acct}")
+    print(f"   (총 {len(BANK_CONFIRMATION_ACCOUNTS)}개)")
+
+    account_list = list(BANK_CONFIRMATION_ACCOUNTS)
+    if not batch_mode:
+        add_in = input("   추가할 계정이 있으면 쉼표로 구분하여 입력하세요 (엔터=없음): ").strip()
+        if add_in:
+            extras = [x.strip() for x in add_in.split(',') if x.strip()]
+            for e in extras:
+                if e and e not in account_list:
+                    account_list.append(e)
+            if extras:
+                print(f"   → 이번 분析에 추가: {', '.join(extras)} (총 {len(account_list)}개 대상)")
+    else:
+        print("   [배치 모드] 기본 계정 목록으로 실행합니다.")
+
+    print(f"   분析 대상 {len(account_list)}개 계정으로 분析 실행합니다.")
+    with _get_writer(base_dir, filename=output_filename) as w:
+        run_bank_confirmation(df, account_list, w)
+    fname = os.path.basename(_target_path(base_dir, filename=output_filename))
+    print(f"   ✅ 은행조회서 완전성 분析이 {fname}에 저장되었습니다.")
+
+
 def run_menu_general_ledger(df, base_dir=None, output_filename=None):
     """총계정원장: 선택된 계정과목의 월별 차변/대변 합계 및 전표건수"""
     print("\n   [총계정원장] 계정과목의 월별 차변합계/대변합계/차변전표건수/대변전표건수를 추출합니다.")
@@ -2323,6 +2415,90 @@ def run_menu_general_ledger(df, base_dir=None, output_filename=None):
     fname = os.path.basename(_target_path(base_dir, filename=output_filename))
     print(f"   ✅ 총계정원장이 {fname}에 저장되었습니다.")
 
+
+
+# =============================================================================
+# 배치 모드 (분析목록 시트 기반 자동 실행)
+# =============================================================================
+
+def _load_active_tasks(task_list_path: str) -> list:
+    """task_list.xlsx의 분析목록 시트에서 실행여부=Y인 태스크 목록 반환.
+    반환: [(번호, 分析명, 기간), ...]  기간은 '당기'/'전기'/'전체' 중 하나.
+    """
+    if not os.path.isfile(task_list_path):
+        raise FileNotFoundError(f'task_list 파일 없음: {task_list_path}')
+    xl = pd.ExcelFile(task_list_path)
+    df_tasks = None
+    for candidate in ['분析목록', *xl.sheet_names]:
+        if candidate not in xl.sheet_names:
+            continue
+        tmp = pd.read_excel(task_list_path, sheet_name=candidate)
+        if all(any(k in str(c) for c in tmp.columns) for k in ('번호', '여부')):
+            df_tasks = tmp
+            break
+    if df_tasks is None:
+        raise ValueError("'분析목록' 시트(번호·여부 컬럼 필요)를 찾을 수 없음")
+
+    col_no     = next((c for c in df_tasks.columns if '번호' in str(c)), None)
+    col_flag   = next((c for c in df_tasks.columns if '여부' in str(c)), None)
+    col_nm     = next((c for c in df_tasks.columns if str(c).strip().endswith('명')
+                       and '번호' not in str(c)), None)
+    col_period = next((c for c in df_tasks.columns if '기간' in str(c) or '대상' in str(c)), None)
+
+    flag   = df_tasks[col_flag].astype(str).str.strip().str.upper()
+    active = df_tasks[flag.isin(['Y', 'O'])].dropna(subset=[col_no])
+
+    tasks = []
+    for _, row in active.iterrows():
+        no     = int(row[col_no])
+        nm     = str(row[col_nm]).strip() if col_nm else ''
+        period = (str(row[col_period]).strip()
+                  if col_period and str(row[col_period]).strip() not in ('nan', '') else '전체')
+        tasks.append((no, nm, period))
+    return tasks
+
+
+def run_batch_mode(df: pd.DataFrame, task_list_path: str, base_dir: str = None):
+    """분析목록 시트에서 실행여부=Y인 메뉴를 순차 자동 실행.
+    메뉴 22(은행조회서 완전성)는 별도 파라미터 시트 없이 기본 계정 목록으로 실행.
+    """
+    base_dir = base_dir or SCRIPT_DIR
+    print(f"\n[배치 모드] task_list: {task_list_path}")
+
+    tasks = _load_active_tasks(task_list_path)
+    if not tasks:
+        print("  실행할 분析 없음 (실행여부=Y 항목 없음).")
+        return
+    print(f"  실행 대상 {len(tasks)}개: {[f'{n}_{nm}' for n, nm, _ in tasks]}")
+
+    for task_no, task_name, period in tasks:
+        key = str(task_no)
+        if key not in MENU:
+            print(f"\n  [{task_no:>2}] {task_name} -> 등록된 메뉴 없음, 건너뜀")
+            continue
+        name, runner = MENU[key]
+
+        if period in ('당기', '전기') and '구분' in df.columns:
+            df_to_use = df[df['구분'] == period].copy()
+        else:
+            df_to_use = df
+
+        out_file = _menu_filename(key, name)
+        print(f"\n▶ [{task_no}. {name}] 실행 (기간={period}, {len(df_to_use):,}행)", flush=True)
+
+        try:
+            if task_no == 22:
+                # 은행조회서 완전성: 별도 파라미터 시트 불필요 - batch_mode로 input() 생략
+                run_menu_bank_confirmation(df_to_use, base_dir=base_dir,
+                                           output_filename=out_file, batch_mode=True)
+            else:
+                runner(df_to_use, base_dir=base_dir, output_filename=out_file)
+        except Exception as e:
+            import traceback
+            print(f"  ⚠️ [{task_no}] 오류: {e}")
+            traceback.print_exc()
+
+    print("\n✅ 배치 실행 완료")
 
 def run_menu_all(df, base_dir=None, output_filename=None):
     """전체 분석 수행 - 각 분석별로 사용자가 계정/설정을 선택한 뒤 순차 실행 (전체는 JET_통합분석결과.xlsx)"""
@@ -2358,11 +2534,32 @@ MENU = {
     '19': ('월별 전계정 분석', run_menu_monthly_full_account),
     '20': ('잔액증감분석 (계정별 거래처별)', run_menu_balance_movement_analysis),
     '21': ('총계정원장', run_menu_general_ledger),
+    '22': ('은행조회서 완전성', run_menu_bank_confirmation),
 }
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--batch', metavar='TASK_LIST', default=None,
+                        help='배치 모드: task_list.xlsx 경로 (분析목록 시트 실행여부=Y 자동 실행)')
+    args, _ = parser.parse_known_args()
+
+    if args.batch:
+        task_list_path = args.batch if os.path.isabs(args.batch) else os.path.join(SCRIPT_DIR, args.batch)
+        print("\n" + "="*80)
+        print("[배치 모드] 분析목록 시트 기반 자동 실행")
+        print("="*80)
+        print("📂 데이터 로드: data/current/ (당기), data/previous/ (전기)")
+        df = load_data()
+        if df is None:
+            print("❌ 로드된 데이터 없음")
+            return
+        df = _preprocess_df(df)
+        run_batch_mode(df, task_list_path, base_dir=SCRIPT_DIR)
+        return
+
     print("\n" + "="*80)
-    print("🚀 [JET] 대화형 분석 메뉴")
+    print("🚀 [JET] 대화형 분析 메뉴")
     print("="*80)
     print("📂 데이터 로드: data/current/ (당기), data/previous/ (전기)")
     print("   (분석 실행 시 data 폴더의 엑셀/CSV 파일은 닫아 두세요. 열려 있으면 로드 실패할 수 있습니다)")
