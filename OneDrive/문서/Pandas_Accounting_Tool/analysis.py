@@ -2320,8 +2320,74 @@ def run_general_ledger(df, writer, account_name):
     print(f"     ✅ 총계정원장 완료: '{account_name}' → {mode_label}")
 
 
+
+# 금융기관명 자동 추출 패턴 (저축은행이 은행보다 먼저 매칭되도록 순서 고정)
+_FI_PATTERN = re.compile(
+    r'([\w가-힣()（）]*'
+    r'(?:저축은행|저축|은행|금고|신협|조합|증권|캐피탈|카드|보험|파이낸스|크레딧|리스))'
+)
+
+def _extract_financial_institution(client_name: str) -> str:
+    """거래처명에서 금융기관명 추출. 예: '우리은행 강남지점' -> '우리은행'"""
+    name = str(client_name).strip()
+    if not name or name.lower() in ('nan', 'none', ''):
+        return ''
+    m = _FI_PATTERN.search(name)
+    return m.group(1) if m else ''
+
+
+def _write_fi_summary(combined, account_list, writer):
+    """금융기관명별 x 계정별 집계 피벗 시트 작성 (조회서 발송 대상 목록)"""
+    sheet_name = '금융기관_조회서목록'
+    fi_col = '금융기관명'
+
+    has_fi = combined[combined[fi_col].astype(str).str.strip() != '']
+    if has_fi.empty:
+        pd.DataFrame({'안내': ['거래처명에서 금융기관명을 인식하지 못했습니다.']}).to_excel(
+            writer, sheet_name=sheet_name, index=False
+        )
+        return
+
+    # 피벗: 행=금융기관명, 열=조회계정(○/-)
+    pivot = has_fi.groupby([fi_col, '조회계정']).size().unstack(fill_value=0)
+    acct_cols = [a for a in account_list if a in pivot.columns]
+    pivot = pivot.reindex(columns=acct_cols, fill_value=0)
+    try:
+        pivot_mark = pivot.map(lambda x: '○' if x > 0 else '-')
+    except AttributeError:
+        pivot_mark = pivot.applymap(lambda x: '○' if x > 0 else '-')
+
+    # 금융기관별 원본 거래처명 목록
+    raw_clients = (
+        has_fi.groupby(fi_col)[COL_CLIENT]
+        .apply(lambda s: ', '.join(sorted(s.dropna().astype(str).unique())))
+        .rename('거래처명(원본)')
+    )
+
+    # 금융기관별 합계
+    agg_kwargs = {'전표건수': ('조회계정', 'count')}
+    if COL_DEBIT  in has_fi.columns: agg_kwargs['차변합계'] = (COL_DEBIT,  'sum')
+    if COL_CREDIT in has_fi.columns: agg_kwargs['대변합계'] = (COL_CREDIT, 'sum')
+    totals = has_fi.groupby(fi_col).agg(**agg_kwargs)
+
+    summary = pivot_mark.join(raw_clients).join(totals).reset_index()
+    summary.rename(columns={fi_col: '금융기관명'}, inplace=True)
+    summary.insert(1, '조회서발송', 'Y')
+
+    fi_count = len(summary)
+    info_rows = [
+        f'[금융기관 조회서 발송 목록]  총 {fi_count}개 금융기관',
+        '* 조회서발송: 감사인이 Y/N 직접 표시  |  ○ = 해당 계정 거래 있음  |  - = 없음',
+    ]
+    pd.DataFrame({'내용': info_rows}).to_excel(
+        writer, sheet_name=sheet_name, startrow=0, index=False, header=False
+    )
+    summary.to_excel(writer, sheet_name=sheet_name, startrow=len(info_rows) + 1, index=False)
+    print(f"     ✅ 금융기관_조회서목록 시트: {fi_count}개 기관")
+
+
 def run_bank_confirmation(df, account_list, writer):
-    """은행조회서 완전성: 지정 계정의 상세내역을 하나의 시트에 통합 기록"""
+    """은행조회서 완전성: 지정 계정의 상세내역을 하나의 시트에 통합 기록 + 금융기관 요약"""
     print(f"   ▶ [은행조회서 완전성] {len(account_list)}개 계정 상세내역 수집 중...")
     sheet_name = '은행조회서완전성'
     all_rows = []
@@ -2344,12 +2410,22 @@ def run_bank_confirmation(df, account_list, writer):
 
     combined = pd.concat(all_rows, ignore_index=True)
 
+    # 거래처명에서 금융기관명 추출
+    if COL_CLIENT in combined.columns:
+        combined['금융기관명'] = combined[COL_CLIENT].apply(_extract_financial_institution)
+    else:
+        combined['금융기관명'] = ''
+
+    # 컬럼 순서: 조회계정 | 구분 | 전표일자 | 전표번호 | 계정명 | 차변 | 대변 | 거래처명 | 금융기관명 | 적요 | ...
     priority_cols = ['조회계정']
     if '구분' in combined.columns:
         priority_cols.append('구분')
-    for c in [COL_DATE, COL_JOURNAL_ID, COL_ACCOUNT, COL_DEBIT, COL_CREDIT, COL_CLIENT, COL_DESC]:
+    for c in [COL_DATE, COL_JOURNAL_ID, COL_ACCOUNT, COL_DEBIT, COL_CREDIT, COL_CLIENT]:
         if c in combined.columns:
             priority_cols.append(c)
+    priority_cols.append('금융기관명')
+    if COL_DESC in combined.columns:
+        priority_cols.append(COL_DESC)
     other_cols = [c for c in combined.columns if c not in priority_cols]
     combined = combined[priority_cols + other_cols]
 
@@ -2360,18 +2436,20 @@ def run_bank_confirmation(df, account_list, writer):
 
     total_debit  = combined[COL_DEBIT].sum()  if COL_DEBIT  in combined.columns else 0
     total_credit = combined[COL_CREDIT].sum() if COL_CREDIT in combined.columns else 0
+    fi_recognized = (combined['금융기관명'].astype(str).str.strip() != '').sum()
 
     info_rows = [
         f"[은행조회서 완전성] 조회 계정: {', '.join(account_list)}",
-        f"총 {len(combined)}건  |  차변합계: {total_debit:,.0f}  |  대변합계: {total_credit:,.0f}",
+        f"총 {len(combined)}건  |  차변합계: {total_debit:,.0f}  |  대변합계: {total_credit:,.0f}  |  금융기관명 인식: {fi_recognized}건",
     ]
     pd.DataFrame({'내용': info_rows}).to_excel(
         writer, sheet_name=sheet_name, startrow=0, index=False, header=False
     )
     combined.to_excel(writer, sheet_name=sheet_name, startrow=len(info_rows) + 1, index=False)
-    print(f"     ✅ 은행조회서 완전성 시트 완료: {len(combined)}건")
+    print(f"     ✅ 은행조회서 완전성 시트 완료: {len(combined)}건 (금융기관명 인식 {fi_recognized}건)")
 
-
+    # 금융기관별 요약 시트
+    _write_fi_summary(combined, account_list, writer)
 def run_menu_bank_confirmation(df, base_dir=None, output_filename=None, batch_mode=False):
     """은행조회서 완전성: 차입금·이자비용 등 관련 계정 상세내역 통합 시트 생성"""
     print("\n   [22. 은행조회서 완전성]")
