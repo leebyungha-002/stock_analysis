@@ -7,6 +7,7 @@ DART 전자공시 주간 수집 스크립트
 """
 import sys
 import os
+import time
 from datetime import datetime, timedelta
 
 if sys.platform == 'win32':
@@ -69,29 +70,34 @@ def build_disclosure_report(days: int = 7) -> str:
 
     for name in MY_FAVORITES:
         dart_name = DART_NAME_MAP.get(name, name)
-        try:
-            corp_code = dart.find_corp_code(dart_name)
-            if not corp_code:
-                lines.append(f"\n▪ {name}: DART 코드 없음 (종목명 확인 필요)")
-                continue
+        for attempt in range(2):
+            try:
+                corp_code = dart.find_corp_code(dart_name)
+                if not corp_code:
+                    lines.append(f"\n▪ {name}: DART 코드 없음 (종목명 확인 필요)")
+                    break
 
-            df = dart.list(corp_code, start=start_str, end=end_str, final=True)
-            if df is None or df.empty:
-                no_disc_list.append(name)
-                continue
+                df = dart.list(corp_code, start=start_str, end=end_str, final=True)
+                if df is None or df.empty:
+                    no_disc_list.append(name)
+                    break
 
-            lines.append(f"\n▪ {name}  ({len(df)}건)")
-            for _, row in df.iterrows():
-                rcept_dt  = str(row.get('rcept_dt', ''))
-                if len(rcept_dt) == 8:
-                    rcept_dt = f"{rcept_dt[:4]}-{rcept_dt[4:6]}-{rcept_dt[6:]}"
-                report_nm = str(row.get('report_nm', '')).strip()
-                flr_nm    = str(row.get('flr_nm', ''))
-                lines.append(f"  [{rcept_dt}] {report_nm}  (제출: {flr_nm})")
-                total_count += 1
+                lines.append(f"\n▪ {name}  ({len(df)}건)")
+                for _, row in df.iterrows():
+                    rcept_dt  = str(row.get('rcept_dt', ''))
+                    if len(rcept_dt) == 8:
+                        rcept_dt = f"{rcept_dt[:4]}-{rcept_dt[4:6]}-{rcept_dt[6:]}"
+                    report_nm = str(row.get('report_nm', '')).strip()
+                    flr_nm    = str(row.get('flr_nm', ''))
+                    lines.append(f"  [{rcept_dt}] {report_nm}  (제출: {flr_nm})")
+                    total_count += 1
+                break
 
-        except Exception as e:
-            lines.append(f"\n▪ {name}: 조회 오류 ({str(e)[:60]})")
+            except Exception as e:
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                lines.append(f"\n▪ {name}: 조회 오류 ({str(e)[:60]})")
 
     if no_disc_list:
         lines.append(f"\n[ 공시 없음 ] {', '.join(no_disc_list)}")

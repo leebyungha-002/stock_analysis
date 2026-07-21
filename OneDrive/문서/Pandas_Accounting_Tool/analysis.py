@@ -546,7 +546,7 @@ def run_user_defined_top_analysis(df, writer, config, period_label=None):
 
         debit_top = pd.DataFrame()
         if show_debit:
-            debit_rows = filtered[filtered[COL_DEBIT] > 0]
+            debit_rows = filtered[filtered[COL_DEBIT] != 0]
             if not debit_rows.empty and COL_CLIENT in df.columns:
                 debit_top = debit_rows.groupby(group_cols)[COL_DEBIT].agg(['count', 'sum']).reset_index()
                 debit_top = debit_top.sort_values(by='sum', ascending=False).head(top_n * 2 if has_구분 else top_n)
@@ -567,7 +567,7 @@ def run_user_defined_top_analysis(df, writer, config, period_label=None):
 
         credit_top = pd.DataFrame()
         if show_credit:
-            credit_rows = filtered[filtered[COL_CREDIT] > 0]
+            credit_rows = filtered[filtered[COL_CREDIT] != 0]
             if not credit_rows.empty and COL_CLIENT in df.columns:
                 credit_top = credit_rows.groupby(group_cols)[COL_CREDIT].agg(['count', 'sum']).reset_index()
                 credit_top = credit_top.sort_values(by='sum', ascending=False).head(top_n * 2 if has_구분 else top_n)
@@ -606,9 +606,12 @@ def run_counterpart_analysis(df, writer, target_acct, target_dir):
         print("     ⚠️ [Pass] 입력된 계정명이 없습니다. (건너뜀)")
         return
 
-    val_col = COL_DEBIT if target_dir == '차변' else COL_CREDIT
-    mask = (df[COL_ACCOUNT].astype(str).str.contains(target_acct, na=False)) & (df[val_col] > 0)
-    target_rows = df[mask]
+    val_col   = COL_DEBIT  if target_dir == '차변' else COL_CREDIT
+    other_col = COL_CREDIT if target_dir == '차변' else COL_DEBIT
+    acct_mask = df[COL_ACCOUNT].astype(str).str.contains(target_acct, na=False)
+    # 정방향 음수(val_col != 0) + 역분개가 반대 컬럼 음수로 저장된 경우 모두 포함
+    amt_mask = (df[val_col].fillna(0) != 0) | (df[other_col].fillna(0) < 0)
+    target_rows = df[acct_mask & amt_mask]
     
     count = len(target_rows)
     print(f"     👉 1단계: '{target_acct}'가 포함된 '{target_dir}' 전표 {count}건 발견")
@@ -869,7 +872,7 @@ def run_employee_summary(df, writer):
         return
     
     # 차변 데이터 집계 (사원명, 계정명별)
-    debit_data = df_emp[df_emp[COL_DEBIT] > 0].copy()
+    debit_data = df_emp[df_emp[COL_DEBIT] != 0].copy()
     if not debit_data.empty:
         debit_summary = debit_data.groupby([employee_col, COL_ACCOUNT]).agg({
             COL_DEBIT: 'sum',
@@ -880,7 +883,7 @@ def run_employee_summary(df, writer):
         debit_summary = pd.DataFrame(columns=['사원명', '차변계정명', '차변금액', '차변전표개수'])
     
     # 대변 데이터 집계 (사원명, 계정명별)
-    credit_data = df_emp[df_emp[COL_CREDIT] > 0].copy()
+    credit_data = df_emp[df_emp[COL_CREDIT] != 0].copy()
     if not credit_data.empty:
         credit_summary = credit_data.groupby([employee_col, COL_ACCOUNT]).agg({
             COL_CREDIT: 'sum',
@@ -1230,12 +1233,12 @@ def _normalize_date_journal_columns(df):
     df.columns = cols
     if COL_DATE not in df.columns:
         for c in df.columns:
-            if c in ('일자', '전표일자', '전표일', '거래일자', '적요일자'):
+            if c in ('일자', '전표일자', '전표일', '거래일자', '적요일자', '결의일자', '결재일자', '기표일자'):
                 df = df.rename(columns={c: COL_DATE})
                 break
     if COL_JOURNAL_ID not in df.columns:
         for c in df.columns:
-            if c in ('전표등록번호', '전표번호', '전표NO', '전표 no'):
+            if c in ('전표등록번호', '전표번호', '전표NO', '전표 no', '결의번호', '전표no', '전표No'):
                 df = df.rename(columns={c: COL_JOURNAL_ID})
                 break
     if COL_CLIENT not in df.columns:
@@ -1285,10 +1288,16 @@ def _normalize_debit_credit_columns(df):
 
 def _to_numeric_amount(series):
     """쉼표·공백 제거 후 숫자 변환 (예: '97,900' -> 97900).
+    음수 표기 다양한 형식 지원: (145,000) → -145000, △145,000 → -145000, 145,000- → -145000.
     엑셀에서 셀 너비 부족으로 표시된 '#######' 등 #만 있는 문자열은 0으로 처리."""
     s = series.astype(str).str.strip()
     s = s.str.replace(',', '', regex=False).str.replace(' ', '', regex=False)
-    s = s.str.replace(r'^#+$', '0', regex=True)  # ####### 등 → 0
+    s = s.str.replace(r'^#+$', '0', regex=True)          # ####### 등 → 0
+    s = s.str.replace('－', '-', regex=False)              # 전각 마이너스 → 반각
+    s = s.str.replace('▲', '-', regex=False)              # 회계용 삼각 음수 기호
+    s = s.str.replace('△', '-', regex=False)              # 회계용 삼각 음수 기호(속빈)
+    s = s.str.replace(r'^\((.+)\)$', r'-\1', regex=True) # (145000) → -145000
+    s = s.str.replace(r'^(.+)-$', r'-\1', regex=True)    # 145000- → -145000 (후위 마이너스)
     return pd.to_numeric(s, errors='coerce').fillna(0)
 
 def _preprocess_df(df):
@@ -1714,10 +1723,26 @@ def analyze_client_detail(df, account_names, client_names, value_type='both'):
     filtered = df[mask_acct & mask_client].copy()
     if filtered.empty:
         return pd.DataFrame(), pd.DataFrame()
+    # ── 진단 로그: 필터 적용 전 대변/차변 분포 확인 (문제 해결 후 제거 가능) ──
+    _diag_neg_credit = (filtered[COL_CREDIT].fillna(0) < 0).sum() if COL_CREDIT in filtered.columns else 0
+    _diag_neg_debit  = (filtered[COL_DEBIT].fillna(0)  < 0).sum() if COL_DEBIT  in filtered.columns else 0
+    print(f"     [진단] 계정+거래처 매칭: {len(filtered)}행  /  음수 대변: {_diag_neg_credit}건  /  음수 차변: {_diag_neg_debit}건")
+    if _diag_neg_credit > 0 or _diag_neg_debit > 0:
+        _sample = filtered[(filtered[COL_CREDIT].fillna(0) < 0) | (filtered[COL_DEBIT].fillna(0) < 0)]
+        print(f"     [진단] 음수 샘플(최대 3행):\n{_sample[[COL_ACCOUNT, COL_DEBIT, COL_CREDIT]].head(3).to_string()}")
+    # ── 진단 로그 끝 ──
     if value_type == '차변':
-        filtered = filtered[filtered[COL_DEBIT].fillna(0).astype(float) > 0]
+        # 차변 양수 + 역분개(대변 음수로 저장) 모두 포함
+        filtered = filtered[
+            (filtered[COL_DEBIT].fillna(0).astype(float) != 0) |
+            (filtered[COL_CREDIT].fillna(0).astype(float) < 0)
+        ]
     elif value_type == '대변':
-        filtered = filtered[filtered[COL_CREDIT].fillna(0).astype(float) > 0]
+        # 대변 양수/음수 + 역분개(차변 음수로 저장) 모두 포함
+        filtered = filtered[
+            (filtered[COL_CREDIT].fillna(0).astype(float) != 0) |
+            (filtered[COL_DEBIT].fillna(0).astype(float) < 0)
+        ]
     # value_type == 'both': 차변·대변 모두 포함 (추가 필터 없음)
     if filtered.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -2247,8 +2272,8 @@ def run_general_ledger(df, writer, account_name):
 
     years = sorted(filtered['Year'].unique())
 
-    debit_rows  = filtered[filtered[COL_DEBIT]  > 0]
-    credit_rows = filtered[filtered[COL_CREDIT] > 0]
+    debit_rows  = filtered[filtered[COL_DEBIT]  != 0]
+    credit_rows = filtered[filtered[COL_CREDIT] != 0]
 
     if len(years) >= 2:
         # ── 연도 비교 형식: 행=월(1~12), 열=연도별 차변/대변 ──
