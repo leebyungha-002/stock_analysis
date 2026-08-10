@@ -12,6 +12,7 @@
    - 2순위(폴백): 자막이 없으면 `yt-dlp`로 오디오 다운로드 → `faster-whisper`로 음성 인식
 4. Gemini API(Google)로 요약 생성 (긴 트랜스크립트는 map-reduce 방식으로 청크 요약 후 종합)
 5. `reports/YYYY-MM-DD_weekly_report.md` 형식으로 마크다운 리포트 저장
+6. 생성된 리포트를 텔레그램으로 파일(.txt) 전송
 
 ## 폴더 구조
 
@@ -22,6 +23,7 @@ youtube_summary/
 ├── transcript.py        # 자막 추출 (API 우선, faster-whisper 폴백)
 ├── summarizer.py         # Gemini API 요약 (map-reduce)
 ├── report.py            # 마크다운 리포트 생성
+├── telegram_notifier.py # 텔레그램 메시지/파일 전송
 ├── channels.json        # 채널 목록 (직접 입력)
 ├── .env                 # API 키 (직접 입력, git에 커밋되지 않음)
 ├── requirements.txt
@@ -51,11 +53,15 @@ python -m venv .venv
 ```
 YOUTUBE_API_KEY=발급받은_유튜브_API_키
 GEMINI_API_KEY=발급받은_Gemini_API_키
+TELEGRAM_BOT_TOKEN=발급받은_텔레그램_봇_토큰
+TELEGRAM_CHAT_ID=전송받을_채팅_ID
 ```
 
 - YouTube API 키: [Google Cloud Console](https://console.cloud.google.com/) → API 및 서비스 → 사용자 인증 정보에서
   "YouTube Data API v3"를 활성화한 프로젝트의 API 키를 발급받으세요.
 - Gemini API 키: [Google AI Studio](https://aistudio.google.com/apikey) → "Create API key"에서 무료로 발급받으세요.
+- 텔레그램 봇 토큰/채팅 ID: BotFather로 봇을 만들고 발급받은 토큰과, 메시지를 받을 채팅 ID를 입력하세요.
+  (선택 사항 — 비워두면 리포트는 정상 생성되고 텔레그램 전송만 건너뜁니다.)
 
 ### 2. `channels.json` — 채널 목록 입력
 

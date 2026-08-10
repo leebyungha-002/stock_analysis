@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import logging
 import os
@@ -43,6 +44,7 @@ def load_channels() -> list[dict[str, str]]:
 def run(days: int, top_n: int, whisper_model_size: str) -> Path:
     from report import generate_report
     from summarizer import summarize_transcript
+    from telegram_notifier import send_document
     from transcript import get_transcript
     from youtube_client import build_youtube_client, get_top_videos
 
@@ -85,6 +87,13 @@ def run(days: int, top_n: int, whisper_model_size: str) -> Path:
 
     report_path = generate_report(results)
     logger.info("리포트 생성 완료: %s", report_path)
+
+    caption = f"📺 주간 유튜브 채널 Top3 요약 ({dt.date.today().isoformat()})"
+    if send_document(report_path.read_text(encoding="utf-8"), filename=report_path.name, caption=caption):
+        logger.info("텔레그램 전송 완료")
+    else:
+        logger.warning("텔레그램 전송 실패")
+
     return report_path
 
 
