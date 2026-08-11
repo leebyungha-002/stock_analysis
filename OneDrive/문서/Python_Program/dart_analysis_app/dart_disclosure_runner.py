@@ -51,7 +51,16 @@ def build_disclosure_report(days: int = 7) -> str:
     if not dart_api_key or dart_api_key == '여기에_DART_API키_입력':
         return "⚠️ .env 파일에 DART_API_KEY를 설정하세요.\nhttps://opendart.fss.or.kr 에서 발급 가능합니다."
 
-    dart = OpenDartReader(dart_api_key)
+    dart = None
+    for attempt in range(3):
+        try:
+            dart = OpenDartReader(dart_api_key)
+            break
+        except Exception as e:
+            if attempt == 2:
+                raise
+            print(f"⚠️  OpenDartReader 초기화 실패 (재시도 {attempt + 1}/3): {e}")
+            time.sleep(5)
 
     end_dt    = datetime.now()
     start_dt  = end_dt - timedelta(days=days)
@@ -122,7 +131,12 @@ def main():
         return
 
     print("\n공시 수집 중... (잠시 소요)")
-    report = build_disclosure_report(days=7)
+    try:
+        report = build_disclosure_report(days=7)
+    except Exception as e:
+        print(f"❌ 공시 수집 실패: {e}")
+        send_message(f"❌ DART 공시 주간 리포트 수집 실패\n{now_str}\n오류: {str(e)[:300]}")
+        raise
     print(report)
 
     filename = f"dart_disclosure_{datetime.now().strftime('%Y%m%d')}.txt"
