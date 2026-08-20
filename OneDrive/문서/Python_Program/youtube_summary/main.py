@@ -89,7 +89,9 @@ def run(days: int, top_n: int, whisper_model_size: str) -> Path:
     logger.info("리포트 생성 완료: %s", report_path)
 
     caption = f"📺 주간 유튜브 채널 Top3 요약 ({dt.date.today().isoformat()})"
-    if send_document(report_path.read_text(encoding="utf-8"), filename=report_path.name, caption=caption):
+    # .md로 보내면 텔레그램 앱이 마크다운으로 인식해 미리보기 인코딩이 깨지는 경우가 있어 .txt로 전송
+    telegram_filename = report_path.stem + ".txt"
+    if send_document(report_path.read_text(encoding="utf-8"), filename=telegram_filename, caption=caption):
         logger.info("텔레그램 전송 완료")
     else:
         logger.warning("텔레그램 전송 실패")
