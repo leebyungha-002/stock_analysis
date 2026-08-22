@@ -1,0 +1,11 @@
+config.ini
+.env
+DAUM_APP.txt
+mail_message_v2.txt
+state.json
+run.log
+mail_logs/
+__pycache__/
+*.pyc
+.venv/
+venv/

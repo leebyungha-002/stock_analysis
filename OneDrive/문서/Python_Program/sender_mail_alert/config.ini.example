@@ -1,0 +1,17 @@
+# 텔레그램 bot_token/chat_id는 이 파일이 아니라 .env(TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID)에서
+# 읽습니다. dart_analysis_app, youtube_summary 등 다른 앱과 같은 봇을 공유합니다.
+# .env.example을 복사해서 .env로 만들고 값을 채우거나, 다른 앱의 .env를 그대로 복사하세요.
+
+[mail]
+imap_server = imap.daum.net
+imap_port = 993
+user = your_id@daum.net
+password = your_app_password_here
+target_senders = alert@example.com, news@example.com
+mailbox = INBOX
+default_days_back = 4
+
+[markdown]
+enabled = true
+output_dir = mail_logs
+mode = daily
