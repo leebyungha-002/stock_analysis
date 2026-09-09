@@ -49,10 +49,26 @@ def _fmt_price(value) -> str:
         return '-'
 
 
+def _strategy1_condition_text() -> str:
+    import analyzer as a
+    return (
+        f" (거래대금 {a.SECTOR_VALUE_SURGE_RATIO}배↑, 상승일 {a.SURGE_MIN_CHANGE_PCT}%↑,"
+        f" 거래량 {a.PULLBACK_VOLUME_DROP_RATIO*100:.0f}%↓, 이평선 근접 ±{a.PULLBACK_MA_TOLERANCE*100:.0f}%)"
+    )
+
+
+def _strategy2_condition_text() -> str:
+    import analyzer as a
+    return (
+        f" (정배열 20>60>120일선, 이격도 ≤{a.ALIGNMENT_DISPARITY_MAX_PCT:.0f}%,"
+        f" 외인매수 {a.ALIGNMENT_MIN_FOREIGN_BUY_DAYS}/10일↑, 20일선 이탈 ≤{a.ALIGNMENT_MAX_MA20_BREACH_DAYS}일)"
+    )
+
+
 def build_report(pullback_results: list, alignment_results: list, date_str: str) -> str:
     lines = [f'[📊 키움 주간 스크리닝 리포트 - {date_str}]']
 
-    lines.append('\n[1. 주도 섹터 & 대장주 눌림목 발굴]')
+    lines.append('\n[1. 주도 섹터 & 대장주 눌림목 발굴]' + _strategy1_condition_text())
     if pullback_results:
         for r in pullback_results:
             supply_text = '순매수 우위 유지' if r['supply_ok'] else '순매수 약화'
@@ -64,7 +80,7 @@ def build_report(pullback_results: list, alignment_results: list, date_str: str)
     else:
         lines.append(' · 조건을 만족하는 종목이 없습니다.')
 
-    lines.append('\n[2. 정배열 초기 & 외인 집중 매집주]')
+    lines.append('\n[2. 정배열 초기 & 외인 집중 매집주]' + _strategy2_condition_text())
     if alignment_results:
         for r in alignment_results:
             wght_sign = '+' if r['wght_change'] >= 0 else ''

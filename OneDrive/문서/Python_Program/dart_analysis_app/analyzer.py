@@ -20,15 +20,16 @@ TOP_N_SECTORS = 3                  # 시장별 주도 섹터 선정 개수
 SECTOR_VALUE_SURGE_RATIO = 1.5     # 거래대금 급증 기준 (20일 평균 대비)
 SECTOR_MA_WINDOW = 20
 LEADER_CANDIDATES_PER_SECTOR = 5   # 섹터 내 대장주 후보 검토 개수 (거래대금 상위)
-SURGE_MIN_CHANGE_PCT = 3.0         # "강한 상승일" 최소 등락률
-PULLBACK_VOLUME_DROP_RATIO = 0.5   # 조정구간 거래량 <= 직전 상승일 대비 50%
-PULLBACK_MA_TOLERANCE = 0.02       # 지지선 근접 허용 오차 (±2%)
+SURGE_MIN_CHANGE_PCT = 2.0         # "강한 상승일" 최소 등락률
+PULLBACK_VOLUME_DROP_RATIO = 0.65  # 조정구간 거래량 <= 직전 상승일 대비 65%
+PULLBACK_MA_TOLERANCE = 0.03       # 지지선 근접 허용 오차 (±3%)
 
 # ---- 전략 2 설정값 ----
 ALIGNMENT_STREAK_LOOKBACK = '10'       # ka10131 조회 기간 (최근 10일)
-ALIGNMENT_MIN_FOREIGN_BUY_DAYS = 7     # 최근 10영업일 중 외국인 순매수 최소 일수
+ALIGNMENT_MIN_FOREIGN_BUY_DAYS = 5     # 최근 10영업일 중 외국인 순매수 최소 일수
 ALIGNMENT_MAX_CANDIDATES = 40          # 1차 후보 중 상세 검증할 최대 종목 수
 ALIGNMENT_DISPARITY_MAX_PCT = 105.0    # 20일선 대비 이격도 상한
+ALIGNMENT_MAX_MA20_BREACH_DAYS = 1     # 최근5일 중 20일선 이탈 허용 일수
 
 MARKETS = [
     {'market_name': '코스피', 'inds_all_cd': '001', 'stock_mrkt_tp': '0', 'streak_mrkt_tp': '001'},
@@ -362,8 +363,9 @@ def _check_alignment_and_foreign_buy(stk_cd: str, stk_nm: str, base_dt: str) -> 
         return None  # 이미 과열 구간
 
     recent5 = pdf.tail(5)
-    if (recent5['cur_prc'] < recent5['ma20']).any():
-        return None  # 20일선 이탈 이력 있음 → 추세 지지 미충족
+    breach_days = int((recent5['cur_prc'] < recent5['ma20']).sum())
+    if breach_days > ALIGNMENT_MAX_MA20_BREACH_DAYS:
+        return None  # 20일선 이탈 일수 초과 → 추세 지지 미충족
 
     try:
         fdf = _foreign_trend_df(stk_cd)
