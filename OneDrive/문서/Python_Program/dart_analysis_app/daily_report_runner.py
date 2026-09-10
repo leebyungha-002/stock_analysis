@@ -132,7 +132,7 @@ def build_kr_stocks_section() -> str:
             continue
 
         try:
-            prompt, supply = get_stock_data_for_gemini(code, found_name, days=10)
+            prompt, supply = get_stock_data_for_gemini(code, found_name, days=20)
 
             # 현재가 조회 (pykrx)
             price, change = 0, 0.0

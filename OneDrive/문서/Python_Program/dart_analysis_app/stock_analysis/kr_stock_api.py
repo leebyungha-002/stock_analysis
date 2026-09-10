@@ -256,7 +256,7 @@ def check_5day_continuous_buying(series):
     except Exception as e:
         return False, []
 
-def get_stock_data_for_gemini(code, stock_name, days=10):
+def get_stock_data_for_gemini(code, stock_name, days=20):
     """
     제미나이 분석용 프롬프트 생성 함수 
     (가격 + 수급 + 기술적 지표 포함)
