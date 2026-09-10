@@ -101,11 +101,11 @@ def download_stock_reports(code_list, max_pages=1):
     - code_list: {종목코드: 종목명} 딕셔너리 (예: {'010140': '삼성중공업', '017960': '한국카본'})
     - max_pages: 종목당 수집할 최대 페이지 수 (기본 1)
 
-    반환: (총 다운로드 수, 건너뜀/실패 수)
+    반환: (총 다운로드 수, 건너뜀/실패 수, 새로 저장된 파일 경로 리스트)
     """
     if not code_list:
         print("  대상 종목이 없습니다.")
-        return 0, 0
+        return 0, 0, []
 
     root = os.path.dirname(os.path.abspath(__file__))
     base_dir = os.path.join(root, "reports", "My_Portfolio")
@@ -114,6 +114,7 @@ def download_stock_reports(code_list, max_pages=1):
     headers = _default_headers()
     total_downloaded = 0
     total_skipped = 0
+    saved_paths = []
 
     for code, stock_name in code_list.items():
         code = str(code).strip().zfill(6)
@@ -216,6 +217,7 @@ def download_stock_reports(code_list, max_pages=1):
                         f.write(r_pdf.content)
                     total_downloaded += 1
                     stock_downloaded += 1
+                    saved_paths.append(filepath)
                     print(f"    저장: {os.path.basename(filepath)}")
                 except Exception as e:
                     print(f"    다운로드 실패 ({title[:20]}...): {e}")
@@ -225,7 +227,7 @@ def download_stock_reports(code_list, max_pages=1):
         if stock_downloaded or stock_skipped:
             print(f"    완료 (다운로드: {stock_downloaded}, 건너뜀/실패: {stock_skipped})")
 
-    return total_downloaded, total_skipped
+    return total_downloaded, total_skipped, saved_paths
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +239,7 @@ def download_industry_reports(pages=3):
     네이버 금융 '산업분석' 게시판의 최신 리포트 다운로드 (새 투자처 발굴용).
 
     - pages: 크롤링할 페이지 수 (기본 3)
-    반환: (다운로드 수, 건너뜀/실패 수)
+    반환: (다운로드 수, 건너뜀/실패 수, 새로 저장된 파일 경로 리스트 — 분류 이동 전 경로)
     """
     root = os.path.dirname(os.path.abspath(__file__))
     save_dir = os.path.join(root, "reports", "Industry_Analysis")
@@ -246,6 +248,7 @@ def download_industry_reports(pages=3):
     headers = _default_headers()
     downloaded = 0
     skipped = 0
+    saved_paths = []
 
     for page in range(1, pages + 1):
         url = "https://finance.naver.com/research/industry_list.naver"
@@ -338,12 +341,13 @@ def download_industry_reports(pages=3):
                 with open(filepath, "wb") as f:
                     f.write(r_pdf.content)
                 downloaded += 1
+                saved_paths.append(filepath)
                 print(f"  저장: {os.path.basename(filepath)}")
             except Exception as e:
                 print(f"  다운로드 실패 ({title[:30]}...): {e}")
                 skipped += 1
 
-    return downloaded, skipped
+    return downloaded, skipped, saved_paths
 
 
 # ---------------------------------------------------------------------------
@@ -401,11 +405,12 @@ def _classify_filename(fname):
     return "기타"
 
 
-def organize_downloaded_files(target_dir=None):
+def organize_downloaded_files(target_dir=None, only_filenames=None):
     """
     Industry_Analysis 등에 쌓인 PDF를 섹터별 폴더로 분류 이동.
     - target_dir: 정리할 폴더 (기본: reports/Industry_Analysis)
-    - 반환: (이동한 파일 수, 폴더별 건수 딕셔너리)
+    - only_filenames: 지정하면 이 파일명들만 처리 (None이면 폴더 내 전체 PDF 대상)
+    - 반환: (이동한 파일 수, 폴더별 건수 딕셔너리, 이동된 최종 경로 리스트)
     """
     root = os.path.dirname(os.path.abspath(__file__))
     if target_dir is None:
@@ -413,13 +418,16 @@ def organize_downloaded_files(target_dir=None):
 
     if not os.path.isdir(target_dir):
         print(f"  대상 폴더가 없습니다: {target_dir}")
-        return 0, {}
+        return 0, {}, []
 
     moved = 0
     by_folder = {}
+    moved_paths = []
 
     for fname in os.listdir(target_dir):
         if not fname.lower().endswith(".pdf"):
+            continue
+        if only_filenames is not None and fname not in only_filenames:
             continue
         src = os.path.join(target_dir, fname)
         if not os.path.isfile(src):
@@ -431,19 +439,21 @@ def organize_downloaded_files(target_dir=None):
         dest_path = os.path.join(dest_dir, fname)
 
         if os.path.abspath(src) == os.path.abspath(dest_path):
+            moved_paths.append(dest_path)
             continue
         try:
             # 이미 해당 폴더에 동일 파일명이 있으면 덮어쓰기 (os.replace는 Windows에서도 기존 파일을 대체함)
             os.replace(src, dest_path)
             moved += 1
             by_folder[folder_name] = by_folder.get(folder_name, 0) + 1
+            moved_paths.append(dest_path)
             print(f"  이동: {folder_name}/ {fname}")
         except OSError as e:
             print(f"  이동 실패 ({fname}): {e}")
 
     if by_folder:
         print(f"  분류 결과: {dict(sorted(by_folder.items()))}")
-    return moved, by_folder
+    return moved, by_folder, moved_paths
 
 
 # ---------------------------------------------------------------------------
@@ -453,13 +463,24 @@ def organize_downloaded_files(target_dir=None):
 if __name__ == "__main__":
     print("=== 1. 보유 종목 리포트 업데이트 ===")
     my_stocks = {"010140": "삼성중공업", "017960": "한국카본", "352820": "하이브"}
-    d1, s1 = download_stock_reports(my_stocks)
+    d1, s1, portfolio_paths = download_stock_reports(my_stocks)
     print(f"  총 다운로드: {d1}건, 건너뜀/실패: {s1}건\n")
 
     print("=== 2. 유망 산업 리포트 탐색 (최신 5페이지) ===")
-    d2, s2 = download_industry_reports(pages=5)
+    d2, s2, industry_root_paths = download_industry_reports(pages=5)
     print(f"  총 다운로드: {d2}건, 건너뜀/실패: {s2}건\n")
 
     print("=== 3. 산업 리포트 분류 정리 (섹터별 폴더) ===")
-    moved, by_folder = organize_downloaded_files()
+    industry_fnames = {os.path.basename(p) for p in industry_root_paths}
+    moved, by_folder, industry_moved_paths = organize_downloaded_files(only_filenames=industry_fnames)
     print(f"  이동: {moved}건\n")
+
+    new_files = portfolio_paths + industry_moved_paths
+    if new_files:
+        try:
+            import summarize_reports
+            summarize_reports.summarize_and_notify(new_files)
+        except Exception as e:
+            print(f"  [요약/텔레그램 전송 실패] {e}")
+    else:
+        print("=== 4. 리포트 요약: 신규 다운로드 없음, 건너뜀 ===")
