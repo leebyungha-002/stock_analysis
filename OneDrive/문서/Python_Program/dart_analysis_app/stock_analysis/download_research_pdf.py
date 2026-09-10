@@ -7,8 +7,12 @@
 
 import os
 import re
+import datetime
 import requests
 from bs4 import BeautifulSoup
+
+# 이보다 오래된 리포트는 다운로드하지 않음
+MAX_REPORT_AGE_DAYS = 90
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +65,29 @@ def _normalize_date(date_str):
     """날짜 문자열을 8자리 숫자로 정규화 (예: 2024.01.15 -> 20240115)."""
     cleaned = re.sub(r"[.\s\-/]", "", date_str)[:8]
     return cleaned if cleaned and re.match(r"^\d{6,8}$", cleaned) else "00000000"
+
+
+def _parse_report_date(date_str):
+    """'26.09.10'(YY.MM.DD) 형식의 날짜 문자열을 date 객체로 변환. 실패 시 None."""
+    cleaned = re.sub(r"[.\s\-/]", "", date_str or "")
+    try:
+        if re.match(r"^\d{6}$", cleaned):
+            yy, mm, dd = int(cleaned[:2]), int(cleaned[2:4]), int(cleaned[4:6])
+            return datetime.date(2000 + yy, mm, dd)
+        if re.match(r"^\d{8}$", cleaned):
+            return datetime.date(int(cleaned[:4]), int(cleaned[4:6]), int(cleaned[6:8]))
+    except ValueError:
+        return None
+    return None
+
+
+def _is_too_old(date_str):
+    """날짜를 확실히 파싱할 수 있고 MAX_REPORT_AGE_DAYS보다 오래됐으면 True.
+    파싱 실패 시에는 걸러내지 않음(False) — 컬럼 오탐지로 전체가 스킵되는 것을 방지."""
+    report_date = _parse_report_date(date_str)
+    if report_date is None:
+        return False
+    return (datetime.date.today() - report_date).days > MAX_REPORT_AGE_DAYS
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +181,11 @@ def download_stock_reports(code_list, max_pages=1):
                 broker = cols[col_broker].get_text(strip=True) if col_broker < len(cols) else ""
                 date_str = cols[col_date].get_text(strip=True) if col_date < len(cols) else ""
                 date_clean = _normalize_date(date_str)
+
+                if _is_too_old(date_str):
+                    total_skipped += 1
+                    stock_skipped += 1
+                    continue
 
                 base_name = f"{date_clean}_{stock_name_safe}_{_sanitize_filename(broker)}_{_sanitize_filename(title)}".strip("_")
                 if not base_name.endswith(".pdf"):
@@ -256,7 +288,9 @@ def download_industry_reports(pages=3):
         col_category = col_category if col_category is not None else 0
         col_title = col_title if col_title is not None else 1
         col_broker = col_broker if col_broker is not None else 2
-        col_date = col_date if col_date is not None else 3
+        # 네이버 산업분석 표에는 <thead>가 없어 위 헤더 자동감지가 항상 실패함 -> 폴백 인덱스 사용.
+        # 실제 열 순서: 분류(0) 제목(1) 증권사(2) 파일링크(3, 텍스트 없음) 날짜(4) 조회수(5)
+        col_date = col_date if col_date is not None else 4
 
         tbody = table.find("tbody") or table
         for row in tbody.find_all("tr"):
@@ -273,6 +307,10 @@ def download_industry_reports(pages=3):
             title = cols[col_title].get_text(strip=True) if col_title < len(cols) else ""
             date_str = cols[col_date].get_text(strip=True) if col_date < len(cols) else ""
             date_clean = _normalize_date(date_str)
+
+            if _is_too_old(date_str):
+                skipped += 1
+                continue
 
             # 파일명: [날짜]_[분류]_[제목].pdf
             base_name = f"{date_clean}_{_sanitize_filename(category)}_{_sanitize_filename(title)}".strip("_")
@@ -392,18 +430,11 @@ def organize_downloaded_files(target_dir=None):
         _ensure_dir(dest_dir)
         dest_path = os.path.join(dest_dir, fname)
 
-        # 이미 해당 폴더에 동일 파일명이 있으면 중복 방지 (넘버링)
-        if os.path.exists(dest_path) and os.path.abspath(src) != os.path.abspath(dest_path):
-            stem, ext = os.path.splitext(fname)
-            n = 1
-            while os.path.exists(dest_path):
-                dest_path = os.path.join(dest_dir, f"{stem}_{n}{ext}")
-                n += 1
-
         if os.path.abspath(src) == os.path.abspath(dest_path):
             continue
         try:
-            os.rename(src, dest_path)
+            # 이미 해당 폴더에 동일 파일명이 있으면 덮어쓰기 (os.replace는 Windows에서도 기존 파일을 대체함)
+            os.replace(src, dest_path)
             moved += 1
             by_folder[folder_name] = by_folder.get(folder_name, 0) + 1
             print(f"  이동: {folder_name}/ {fname}")
