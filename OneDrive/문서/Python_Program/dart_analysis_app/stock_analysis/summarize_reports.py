@@ -79,29 +79,41 @@ def _summarize_one(path):
 
 
 def summarize_and_notify(file_paths):
-    """file_paths의 PDF들을 요약해 하나의 마크다운 파일로 텔레그램 전송."""
+    """file_paths의 PDF들을 요약해, 소속 폴더(섹터/종목명)별로 마크다운 파일을 나눠 텔레그램 전송."""
     if not file_paths:
         print("  요약할 신규 리포트가 없습니다.")
         return
 
-    print(f"=== 4. 리포트 요약 ({len(file_paths)}건, model={MODEL}) ===")
-    sections = []
-    for i, path in enumerate(file_paths, 1):
-        print(f"  [{i}/{len(file_paths)}] {os.path.basename(path)}")
-        sections.append(_summarize_one(path))
-        if i < len(file_paths):
-            time.sleep(CALL_INTERVAL_SEC)
+    groups = {}
+    for path in file_paths:
+        group = os.path.basename(os.path.dirname(path))
+        groups.setdefault(group, []).append(path)
+
+    total = len(file_paths)
+    print(f"=== 4. 리포트 요약 ({total}건, {len(groups)}개 그룹, model={MODEL}) ===")
 
     date_str = datetime.now().strftime("%Y-%m-%d")
-    md = (
-        f"# 증권사 리포트 요약 ({date_str})\n\n"
-        f"신규 리포트 {len(file_paths)}건\n\n"
-        + "\n---\n\n".join(sections)
-    )
+    done = 0
+    for group in sorted(groups):
+        paths = groups[group]
+        print(f"  [그룹: {group}] {len(paths)}건")
+        sections = []
+        for path in paths:
+            done += 1
+            print(f"    [{done}/{total}] {os.path.basename(path)}")
+            sections.append(_summarize_one(path))
+            if done < total:
+                time.sleep(CALL_INTERVAL_SEC)
 
-    ok = telegram_notifier.send_document(
-        md,
-        filename=f"report_summary_{date_str}.md",
-        caption=f"증권사 리포트 요약 {len(file_paths)}건 ({date_str})",
-    )
-    print("  텔레그램 전송:", "성공" if ok else "실패")
+        md = (
+            f"# {group} 리포트 요약 ({date_str})\n\n"
+            f"신규 리포트 {len(paths)}건\n\n"
+            + "\n---\n\n".join(sections)
+        )
+
+        ok = telegram_notifier.send_document(
+            md,
+            filename=f"report_summary_{group}_{date_str}.md",
+            caption=f"{group} 리포트 요약 {len(paths)}건 ({date_str})",
+        )
+        print(f"    텔레그램 전송: {'성공' if ok else '실패'}")
